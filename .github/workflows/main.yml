@@ -1,0 +1,99 @@
+name: Build HVSonTool
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build tweak (rootful + rootless)
+    runs-on: macos-latest
+
+    steps:
+      # ─────────────────────────────────────────────
+      # 1. Checkout source
+      # ─────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ─────────────────────────────────────────────
+      # 2. Cài Theos + iOS SDKs
+      # ─────────────────────────────────────────────
+      - name: Install Theos
+        run: |
+          set -e
+          export THEOS=$HOME/theos
+          git clone --recursive --depth=1 https://github.com/theos/theos.git "$THEOS"
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "$THEOS/bin" >> $GITHUB_PATH
+
+      - name: Install iOS SDKs
+        run: |
+          set -e
+          export THEOS=$HOME/theos
+          git clone --depth=1 https://github.com/theos/sdks.git "$THEOS/sdks"
+          ls "$THEOS/sdks"
+
+      - name: Install ldid + dpkg
+        run: |
+          brew install ldid dpkg 2>/dev/null || brew install ldid
+
+      # ─────────────────────────────────────────────
+      # 3. Build rootful (iphoneos-arm)
+      # ─────────────────────────────────────────────
+      - name: Build rootful package
+        run: |
+          set -e
+          make clean || true
+          make package FINALPACKAGE=1
+          mkdir -p artifacts/rootful
+          cp -v packages/*.deb artifacts/rootful/ || true
+
+      # ─────────────────────────────────────────────
+      # 4. Build rootless (iphoneos-arm64)
+      #    Dùng Dopamine / palera1n rootless (iOS 15+)
+      # ─────────────────────────────────────────────
+      - name: Build rootless package
+        run: |
+          set -e
+          make clean || true
+          make package \
+            FINALPACKAGE=1 \
+            THEOS_PACKAGE_SCHEME=rootless \
+            ARCHS="arm64 arm64e"
+          mkdir -p artifacts/rootless
+          cp -v packages/*.deb artifacts/rootless/ || true
+
+      # ─────────────────────────────────────────────
+      # 5. Upload artifacts
+      # ─────────────────────────────────────────────
+      - name: Upload rootful .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: HVSonTool-rootful
+          path: artifacts/rootful/*.deb
+          if-no-files-found: error
+
+      - name: Upload rootless .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: HVSonTool-rootless
+          path: artifacts/rootless/*.deb
+          if-no-files-found: error
+
+      # ─────────────────────────────────────────────
+      # 6. (Tuỳ chọn) Tạo GitHub Release khi push tag
+      # ─────────────────────────────────────────────
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.deb
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
