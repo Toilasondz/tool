@@ -13,51 +13,50 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      # ─────────────────────────────────────────────
-      # 1. Checkout source
-      # ─────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # ─────────────────────────────────────────────
-      # 2. Cài Theos + iOS SDKs
-      # ─────────────────────────────────────────────
-      - name: Install Theos
+      # ─── Setup Theos (dùng bản có sẵn nếu có) ───
+      - name: Setup Theos
         run: |
           set -e
-          export THEOS=$HOME/theos
-          git clone --recursive --depth=1 https://github.com/theos/theos.git "$THEOS"
+          export THEOS="$HOME/theos"
+          if [ ! -x "$THEOS/bin/theos" ]; then
+            rm -rf "$THEOS"
+            git clone --recursive --depth=1 https://github.com/theos/theos.git "$THEOS"
+          else
+            echo "Theos already pre-installed on runner"
+          fi
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
+      # ─── Setup SDKs (xoá cũ rồi clone lại) ───
       - name: Install iOS SDKs
         run: |
           set -e
-          export THEOS=$HOME/theos
-          git clone --depth=1 https://github.com/theos/sdks.git "$THEOS/sdks"
-          ls "$THEOS/sdks"
+          export THEOS="$HOME/theos"
+          SDK_DIR="$THEOS/sdks"
+          rm -rf "$SDK_DIR"
+          git clone --depth=1 https://github.com/theos/sdks.git "$SDK_DIR"
+          ls -1 "$SDK_DIR" | grep iPhoneOS || true
 
-      - name: Install ldid + dpkg
+      # ─── Công cụ build ───
+      - name: Install build tools
         run: |
           brew install ldid dpkg 2>/dev/null || brew install ldid
 
-      # ─────────────────────────────────────────────
-      # 3. Build rootful (iphoneos-arm)
-      # ─────────────────────────────────────────────
+      # ─── Build rootful ───
       - name: Build rootful package
         run: |
           set -e
           make clean || true
           make package FINALPACKAGE=1
           mkdir -p artifacts/rootful
-          cp -v packages/*.deb artifacts/rootful/ || true
+          cp -v packages/*.deb artifacts/rootful/ 2>/dev/null || true
 
-      # ─────────────────────────────────────────────
-      # 4. Build rootless (iphoneos-arm64)
-      #    Dùng Dopamine / palera1n rootless (iOS 15+)
-      # ─────────────────────────────────────────────
+      # ─── Build rootless ───
       - name: Build rootless package
         run: |
           set -e
@@ -67,11 +66,9 @@ jobs:
             THEOS_PACKAGE_SCHEME=rootless \
             ARCHS="arm64 arm64e"
           mkdir -p artifacts/rootless
-          cp -v packages/*.deb artifacts/rootless/ || true
+          cp -v packages/*.deb artifacts/rootless/ 2>/dev/null || true
 
-      # ─────────────────────────────────────────────
-      # 5. Upload artifacts
-      # ─────────────────────────────────────────────
+      # ─── Upload artifacts ───
       - name: Upload rootful .deb
         uses: actions/upload-artifact@v4
         with:
@@ -86,9 +83,7 @@ jobs:
           path: artifacts/rootless/*.deb
           if-no-files-found: error
 
-      # ─────────────────────────────────────────────
-      # 6. (Tuỳ chọn) Tạo GitHub Release khi push tag
-      # ─────────────────────────────────────────────
+      # ─── Release khi push tag ───
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
